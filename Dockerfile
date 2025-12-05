@@ -21,7 +21,7 @@ ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.version=${VERSION}" -o /goputioarr ./cmd
 
 # Final stage
-FROM alpine:3.19
+FROM alpine:3.23
 
 # Install ca-certificates for HTTPS requests and tzdata for timezone support
 RUN apk add --no-cache ca-certificates tzdata
