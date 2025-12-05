@@ -2,7 +2,7 @@
 
 Proxy that allows put.io to be used as a download client for sonarr/radarr/whisparr. The proxy uses the Transmission protocol.
 
-This is a Go port of the original Rust implementation.
+This is a Go port of the [original Rust implementation](https://github.com/wouterdebie/putioarr).
 
 ## Installation
 
