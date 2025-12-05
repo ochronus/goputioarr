@@ -4,10 +4,7 @@ updates:
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "UTC"
+      interval: "daily"
     open-pull-requests-limit: 10
     reviewers:
       - "ochronus"
@@ -28,10 +25,7 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "UTC"
+      interval: "daily"
     open-pull-requests-limit: 5
     reviewers:
       - "ochronus"
@@ -49,10 +43,7 @@ updates:
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "UTC"
+      interval: "daily"
     open-pull-requests-limit: 5
     reviewers:
       - "ochronus"
