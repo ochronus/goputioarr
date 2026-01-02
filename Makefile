@@ -2,7 +2,7 @@
 
 # Binary name
 BINARY_NAME=goputioarr
-VERSION=0.5.36
+VERSION=0.5.38
 
 # Go parameters
 GOCMD=go
