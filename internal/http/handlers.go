@@ -24,10 +24,10 @@ type Handler struct {
 }
 
 // NewHandler creates a new HTTP handler
-func NewHandler(cfg *config.Config, logger *logrus.Logger) *Handler {
+func NewHandler(cfg *config.Config, logger *logrus.Logger, putioClient *putio.Client) *Handler {
 	return &Handler{
 		config:      cfg,
-		putioClient: putio.NewClient(cfg.Putio.APIKey),
+		putioClient: putioClient,
 		logger:      logger,
 	}
 }

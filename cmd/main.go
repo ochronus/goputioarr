@@ -7,13 +7,14 @@ import (
 	"github.com/ochronus/goputioarr/internal/config"
 	"github.com/ochronus/goputioarr/internal/download"
 	"github.com/ochronus/goputioarr/internal/http"
+	"github.com/ochronus/goputioarr/internal/services/arr"
 	"github.com/ochronus/goputioarr/internal/services/putio"
 	"github.com/ochronus/goputioarr/internal/utils"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
-const version = "0.5.36"
+const version = "0.5.37"
 
 var configPath string
 
@@ -107,19 +108,27 @@ func runProxy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// Verify put.io API key
-	client := putio.NewClient(cfg.Putio.APIKey)
-	if _, err := client.GetAccountInfo(); err != nil {
+	// Build shared clients
+	putioClient := putio.NewClient(cfg.Putio.APIKey)
+	if _, err := putioClient.GetAccountInfo(); err != nil {
 		return fmt.Errorf("failed to verify put.io API key: %w", err)
 	}
 
+	var arrClients []download.ArrServiceClient
+	for _, svc := range cfg.GetArrConfigs() {
+		arrClients = append(arrClients, download.ArrServiceClient{
+			Name:   svc.Name,
+			Client: arr.NewClient(svc.URL, svc.APIKey),
+		})
+	}
+
 	// Start download manager
-	downloadManager := download.NewManager(cfg, logger)
+	downloadManager := download.NewManager(cfg, logger, putioClient, arrClients)
 	if err := downloadManager.Start(); err != nil {
 		return fmt.Errorf("failed to start download manager: %w", err)
 	}
 
 	// Start HTTP server
-	server := http.NewServer(cfg, logger)
+	server := http.NewServer(cfg, logger, putioClient)
 	return server.Start()
 }

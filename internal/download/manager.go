@@ -16,9 +16,15 @@ import (
 )
 
 // Manager handles the download orchestration
+type ArrServiceClient struct {
+	Name   string
+	Client *arr.Client
+}
+
 type Manager struct {
 	config       *config.Config
 	putioClient  *putio.Client
+	arrClients   []ArrServiceClient
 	transferChan chan TransferMessage
 	downloadChan chan DownloadTargetMessage
 	seen         map[uint64]bool
@@ -27,10 +33,11 @@ type Manager struct {
 }
 
 // NewManager creates a new download manager
-func NewManager(cfg *config.Config, logger *logrus.Logger) *Manager {
+func NewManager(cfg *config.Config, logger *logrus.Logger, putioClient *putio.Client, arrClients []ArrServiceClient) *Manager {
 	return &Manager{
 		config:       cfg,
-		putioClient:  putio.NewClient(cfg.Putio.APIKey),
+		putioClient:  putioClient,
+		arrClients:   arrClients,
 		transferChan: make(chan TransferMessage, 100),
 		downloadChan: make(chan DownloadTargetMessage, 100),
 		seen:         make(map[uint64]bool),
@@ -310,16 +317,14 @@ func (m *Manager) isImported(transfer *Transfer) bool {
 		return false
 	}
 
-	services := m.config.GetArrConfigs()
-	if len(services) == 0 {
+	if len(m.arrClients) == 0 {
 		return false
 	}
 
 	for _, target := range fileTargets {
 		imported := false
-		for _, svc := range services {
-			client := arr.NewClient(svc.URL, svc.APIKey)
-			isImported, err := client.CheckImported(target.To)
+		for _, svc := range m.arrClients {
+			isImported, err := svc.Client.CheckImported(target.To)
 			if err != nil {
 				m.logger.Errorf("Error checking import from %s: %v", svc.Name, err)
 				continue

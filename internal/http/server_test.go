@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ochronus/goputioarr/internal/config"
+	"github.com/ochronus/goputioarr/internal/services/putio"
 	"github.com/sirupsen/logrus"
 )
 
@@ -38,7 +39,7 @@ func TestNewServer(t *testing.T) {
 	cfg := setupTestConfig()
 	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger)
+	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
 
 	if server == nil {
 		t.Fatal("expected non-nil server")
@@ -62,7 +63,7 @@ func TestNewServerDebugMode(t *testing.T) {
 	cfg.Loglevel = "debug"
 	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger)
+	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
 
 	if server == nil {
 		t.Fatal("expected non-nil server")
@@ -73,7 +74,7 @@ func TestGetRouter(t *testing.T) {
 	cfg := setupTestConfig()
 	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger)
+	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
 	router := server.GetRouter()
 
 	if router == nil {
@@ -88,7 +89,7 @@ func TestServerRouteRegistration(t *testing.T) {
 	cfg := setupTestConfig()
 	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger)
+	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
 	router := server.GetRouter()
 
 	// Test that routes are registered
@@ -120,7 +121,7 @@ func TestServerRoutesRespond(t *testing.T) {
 	cfg := setupTestConfig()
 	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger)
+	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
 	router := server.GetRouter()
 
 	tests := []struct {
@@ -167,7 +168,7 @@ func TestServerRecoveryMiddleware(t *testing.T) {
 	cfg := setupTestConfig()
 	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger)
+	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
 	router := server.GetRouter()
 
 	// Add a route that panics
@@ -197,7 +198,7 @@ func TestServerHandlerIntegration(t *testing.T) {
 	cfg := setupTestConfig()
 	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger)
+	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
 
 	// Verify handler was created with correct config
 	if server.handler.config.Username != cfg.Username {
@@ -220,8 +221,8 @@ func TestServerMultipleInstances(t *testing.T) {
 
 	logger := setupTestLogger()
 
-	server1 := NewServer(cfg1, logger)
-	server2 := NewServer(cfg2, logger)
+	server1 := NewServer(cfg1, logger, putio.NewClient(cfg1.Putio.APIKey))
+	server2 := NewServer(cfg2, logger, putio.NewClient(cfg2.Putio.APIKey))
 
 	if server1.config.Port == server2.config.Port {
 		t.Error("servers should have different ports")
@@ -235,7 +236,7 @@ func TestServerConfigReference(t *testing.T) {
 	cfg := setupTestConfig()
 	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger)
+	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
 
 	// Modify config after server creation
 	originalDir := cfg.DownloadDirectory
@@ -254,7 +255,7 @@ func TestServerLoggerReference(t *testing.T) {
 	cfg := setupTestConfig()
 	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger)
+	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
 
 	// Server should hold reference to logger
 	if server.logger != logger {
@@ -272,7 +273,7 @@ func TestServerReleaseModeForNonDebug(t *testing.T) {
 			logger := setupTestLogger()
 
 			// This should set gin to release mode
-			server := NewServer(cfg, logger)
+			server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
 
 			if server == nil {
 				t.Fatal("expected non-nil server")

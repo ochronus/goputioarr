@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ochronus/goputioarr/internal/config"
+	"github.com/ochronus/goputioarr/internal/services/putio"
 	"github.com/ochronus/goputioarr/internal/services/transmission"
 	"github.com/sirupsen/logrus"
 )
@@ -30,7 +31,9 @@ func setupTestHandler() *Handler {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel) // Suppress log output during tests
 
-	return NewHandler(cfg, logger)
+	putioClient := putio.NewClient(cfg.Putio.APIKey)
+
+	return NewHandler(cfg, logger, putioClient)
 }
 
 func setupTestRouter(handler *Handler) *gin.Engine {
@@ -739,7 +742,7 @@ func TestHandlerConfigDownloadDirectory(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
 
-	handler := NewHandler(cfg, logger)
+	handler := NewHandler(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
 
 	if handler.config.DownloadDirectory != "/custom/downloads" {
 		t.Errorf("expected DownloadDirectory '/custom/downloads', got '%s'", handler.config.DownloadDirectory)
