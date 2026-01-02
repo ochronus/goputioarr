@@ -25,7 +25,6 @@ var version = "dev"
 
 var (
 	configPath string
-	selfUpdate bool
 )
 
 func main() {
@@ -49,7 +48,14 @@ func main() {
 		RunE:  runProxy,
 	}
 	runCmd.Flags().StringVarP(&configPath, "config", "c", defaultConfigPath, "Path to config file")
-	rootCmd.PersistentFlags().BoolVar(&selfUpdate, "self-update", false, "Check for a newer release on GitHub and replace the current binary")
+
+	selfUpdateCmd := &cobra.Command{
+		Use:   "self-update",
+		Short: "Update goputioarr to the latest release for this OS/arch",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return performSelfUpdate()
+		},
+	}
 
 	// Get-token command
 	getTokenCmd := &cobra.Command{
@@ -83,6 +89,7 @@ func main() {
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(getTokenCmd)
 	rootCmd.AddCommand(generateConfigCmd)
+	rootCmd.AddCommand(selfUpdateCmd)
 	rootCmd.AddCommand(versionCmd)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -92,13 +99,6 @@ func main() {
 }
 
 func runProxy(cmd *cobra.Command, args []string) error {
-	if selfUpdate {
-		if err := performSelfUpdate(); err != nil {
-			return fmt.Errorf("self-update failed: %w", err)
-		}
-		return nil
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

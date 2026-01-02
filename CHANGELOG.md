@@ -1,7 +1,7 @@
 # Changelog
 
 ## v0.5.40
-- Add `--self-update` flag that checks GitHub for a newer release matching the current OS/architecture and replaces the binary (with backup).
+- Add `self-update` command that checks GitHub for a newer release matching the current OS/architecture and replaces the binary (with backup).
 - If already on the latest version, report and exit without changes.
 
 ## v0.5.39
