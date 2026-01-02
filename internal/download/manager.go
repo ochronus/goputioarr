@@ -1,6 +1,7 @@
 package download
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,10 +31,16 @@ type Manager struct {
 	seen         map[uint64]bool
 	seenMu       sync.RWMutex
 	logger       *logrus.Logger
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // NewManager creates a new download manager
 func NewManager(cfg *config.Config, logger *logrus.Logger, putioClient *putio.Client, arrClients []ArrServiceClient) *Manager {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Manager{
 		config:       cfg,
 		putioClient:  putioClient,
@@ -42,46 +49,85 @@ func NewManager(cfg *config.Config, logger *logrus.Logger, putioClient *putio.Cl
 		downloadChan: make(chan DownloadTargetMessage, 100),
 		seen:         make(map[uint64]bool),
 		logger:       logger,
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 }
 
-// Start begins the download manager's operations
+// Start begins the download manager's operations with a background context.
 func (m *Manager) Start() error {
+	return m.StartWithContext(context.Background())
+}
+
+// StartWithContext begins the download manager's operations using the provided parent context.
+func (m *Manager) StartWithContext(ctx context.Context) error {
+	// derive a cancellable context from the provided parent
+	m.ctx, m.cancel = context.WithCancel(ctx)
+
 	// Start orchestration workers
 	for i := 0; i < m.config.OrchestrationWorkers; i++ {
+		m.wg.Add(1)
 		go m.orchestrationWorker(i)
 	}
 
 	// Start download workers
 	for i := 0; i < m.config.DownloadWorkers; i++ {
+		m.wg.Add(1)
 		go m.downloadWorker(i)
 	}
 
 	// Start the transfer producer
+	m.wg.Add(1)
 	go m.produceTransfers()
 
 	return nil
 }
 
+// Stop signals all workers to exit and waits for them to finish.
+func (m *Manager) Stop() {
+	m.cancel()
+	m.wg.Wait()
+}
+
 // orchestrationWorker handles transfer state transitions
 func (m *Manager) orchestrationWorker(id int) {
-	for msg := range m.transferChan {
-		switch msg.Type {
-		case MessageQueuedForDownload:
-			m.handleQueuedForDownload(msg.Transfer)
-		case MessageDownloaded:
-			go m.watchForImport(msg.Transfer)
-		case MessageImported:
-			go m.watchSeeding(msg.Transfer)
+	defer m.wg.Done()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case msg := <-m.transferChan:
+			switch msg.Type {
+			case MessageQueuedForDownload:
+				m.handleQueuedForDownload(msg.Transfer)
+			case MessageDownloaded:
+				m.wg.Add(1)
+				go m.watchForImport(msg.Transfer)
+			case MessageImported:
+				m.wg.Add(1)
+				go m.watchSeeding(msg.Transfer)
+			}
 		}
 	}
 }
 
 // downloadWorker handles file downloads
 func (m *Manager) downloadWorker(id int) {
-	for msg := range m.downloadChan {
-		status := m.downloadTarget(&msg.Target)
-		msg.DoneChan <- status
+	defer m.wg.Done()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case msg := <-m.downloadChan:
+			status := m.downloadTarget(&msg.Target)
+			select {
+			case <-m.ctx.Done():
+				return
+			case msg.DoneChan <- status:
+			}
+		}
 	}
 }
 
@@ -99,27 +145,39 @@ func (m *Manager) handleQueuedForDownload(transfer *Transfer) {
 	doneChans := make([]chan DownloadDoneStatus, len(targets))
 	for i, target := range targets {
 		doneChans[i] = make(chan DownloadDoneStatus, 1)
-		m.downloadChan <- DownloadTargetMessage{
+		select {
+		case <-m.ctx.Done():
+			return
+		case m.downloadChan <- DownloadTargetMessage{
 			Target:   target,
 			DoneChan: doneChans[i],
+		}:
 		}
 	}
 
 	// Wait for all downloads to complete
 	allSuccess := true
 	for _, doneChan := range doneChans {
-		status := <-doneChan
-		if status != DownloadStatusSuccess {
-			allSuccess = false
+		select {
+		case <-m.ctx.Done():
+			return
+		case status := <-doneChan:
+			if status != DownloadStatusSuccess {
+				allSuccess = false
+			}
 		}
 	}
 
 	if allSuccess {
 		m.logger.Infof("%s: download done", transfer)
 		transfer.SetTargets(targets)
-		m.transferChan <- TransferMessage{
+		select {
+		case <-m.ctx.Done():
+			return
+		case m.transferChan <- TransferMessage{
 			Type:     MessageDownloaded,
 			Transfer: transfer,
+		}:
 		}
 	} else {
 		m.logger.Warnf("%s: not all targets downloaded", transfer)
@@ -182,7 +240,17 @@ func (m *Manager) fetchFile(target *DownloadTarget) error {
 	}
 	defer tmpFile.Close()
 
-	resp, err := http.Get(target.From)
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.From, nil)
+	if err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		os.Remove(tmpPath)
 		return err
@@ -278,34 +346,44 @@ func (m *Manager) recurseDownloadTargets(fileID int64, hash string, basePath str
 
 // watchForImport watches for a transfer to be imported by arr services
 func (m *Manager) watchForImport(transfer *Transfer) {
+	defer m.wg.Done()
 	m.logger.Infof("%s: watching imports", transfer)
 
 	ticker := time.NewTicker(time.Duration(m.config.PollingInterval) * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		if m.isImported(transfer) {
-			m.logger.Infof("%s: imported", transfer)
-
-			// Clean up downloaded files
-			topLevel := transfer.GetTopLevel()
-			if topLevel != nil {
-				info, err := os.Stat(topLevel.To)
-				if err == nil {
-					if info.IsDir() {
-						os.RemoveAll(topLevel.To)
-					} else {
-						os.Remove(topLevel.To)
-					}
-					m.logger.Infof("%s: deleted", topLevel)
-				}
-			}
-
-			m.transferChan <- TransferMessage{
-				Type:     MessageImported,
-				Transfer: transfer,
-			}
+	for {
+		select {
+		case <-m.ctx.Done():
 			return
+		case <-ticker.C:
+			if m.isImported(transfer) {
+				m.logger.Infof("%s: imported", transfer)
+
+				// Clean up downloaded files
+				topLevel := transfer.GetTopLevel()
+				if topLevel != nil {
+					info, err := os.Stat(topLevel.To)
+					if err == nil {
+						if info.IsDir() {
+							os.RemoveAll(topLevel.To)
+						} else {
+							os.Remove(topLevel.To)
+						}
+						m.logger.Infof("%s: deleted", topLevel)
+					}
+				}
+
+				select {
+				case <-m.ctx.Done():
+					return
+				case m.transferChan <- TransferMessage{
+					Type:     MessageImported,
+					Transfer: transfer,
+				}:
+				}
+				return
+			}
 		}
 	}
 }
@@ -345,45 +423,53 @@ func (m *Manager) isImported(transfer *Transfer) bool {
 
 // watchSeeding watches for a transfer to stop seeding
 func (m *Manager) watchSeeding(transfer *Transfer) {
+	defer m.wg.Done()
 	m.logger.Infof("%s: watching seeding", transfer)
 
 	ticker := time.NewTicker(time.Duration(m.config.PollingInterval) * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		resp, err := m.putioClient.GetTransfer(transfer.TransferID)
-		if err != nil {
-			m.logger.Warnf("%s: failed to get transfer status: %v", transfer, err)
-			continue
-		}
-
-		if resp.Transfer.Status != "SEEDING" {
-			m.logger.Infof("%s: stopped seeding", transfer)
-
-			// Remove transfer from put.io
-			if err := m.putioClient.RemoveTransfer(transfer.TransferID); err != nil {
-				m.logger.Warnf("%s: failed to remove transfer: %v", transfer, err)
-			} else {
-				m.logger.Infof("%s: removed from put.io", transfer)
-			}
-
-			// Delete remote files
-			if transfer.FileID != nil {
-				if err := m.putioClient.DeleteFile(*transfer.FileID); err != nil {
-					m.logger.Warnf("%s: unable to delete remote files: %v", transfer, err)
-				} else {
-					m.logger.Infof("%s: deleted remote files", transfer)
-				}
-			}
-
-			m.logger.Infof("%s: done seeding", transfer)
+	for {
+		select {
+		case <-m.ctx.Done():
 			return
+		case <-ticker.C:
+			resp, err := m.putioClient.GetTransfer(transfer.TransferID)
+			if err != nil {
+				m.logger.Warnf("%s: failed to get transfer status: %v", transfer, err)
+				continue
+			}
+
+			if resp.Transfer.Status != "SEEDING" {
+				m.logger.Infof("%s: stopped seeding", transfer)
+
+				// Remove transfer from put.io
+				if err := m.putioClient.RemoveTransfer(transfer.TransferID); err != nil {
+					m.logger.Warnf("%s: failed to remove transfer: %v", transfer, err)
+				} else {
+					m.logger.Infof("%s: removed from put.io", transfer)
+				}
+
+				// Delete remote files
+				if transfer.FileID != nil {
+					if err := m.putioClient.DeleteFile(*transfer.FileID); err != nil {
+						m.logger.Warnf("%s: unable to delete remote files: %v", transfer, err)
+					} else {
+						m.logger.Infof("%s: deleted remote files", transfer)
+					}
+				}
+
+				m.logger.Infof("%s: done seeding", transfer)
+				return
+			}
 		}
 	}
 }
 
 // produceTransfers monitors put.io for new transfers
 func (m *Manager) produceTransfers() {
+	defer m.wg.Done()
+
 	m.logger.Info("Checking unfinished transfers")
 
 	// Check existing transfers on startup
@@ -396,44 +482,53 @@ func (m *Manager) produceTransfers() {
 
 	lastLogTime := time.Now()
 
-	for range ticker.C {
-		listResp, err := m.putioClient.ListTransfers()
-		if err != nil {
-			m.logger.Warnf("List put.io transfers failed. Retrying..: %v", err)
-			continue
-		}
-
-		for _, pt := range listResp.Transfers {
-			if m.isSeen(pt.ID) || !pt.IsDownloadable() {
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			listResp, err := m.putioClient.ListTransfers()
+			if err != nil {
+				m.logger.Warnf("List put.io transfers failed. Retrying..: %v", err)
 				continue
 			}
 
-			transfer := NewTransfer(m.config, &pt)
-			m.logger.Infof("%s: ready for download", transfer)
-
-			m.transferChan <- TransferMessage{
-				Type:     MessageQueuedForDownload,
-				Transfer: transfer,
-			}
-
-			m.markSeen(pt.ID)
-		}
-
-		// Clean up seen list
-		activeIDs := make(map[uint64]bool)
-		for _, t := range listResp.Transfers {
-			activeIDs[t.ID] = true
-		}
-		m.cleanupSeen(activeIDs)
-
-		// Log status periodically
-		if time.Since(lastLogTime) >= 60*time.Second {
-			m.logger.Infof("Active transfers: %d", len(listResp.Transfers))
 			for _, pt := range listResp.Transfers {
+				if m.isSeen(pt.ID) || !pt.IsDownloadable() {
+					continue
+				}
+
 				transfer := NewTransfer(m.config, &pt)
-				m.logger.Infof("  %s", transfer)
+				m.logger.Infof("%s: ready for download", transfer)
+
+				select {
+				case <-m.ctx.Done():
+					return
+				case m.transferChan <- TransferMessage{
+					Type:     MessageQueuedForDownload,
+					Transfer: transfer,
+				}:
+				}
+
+				m.markSeen(pt.ID)
 			}
-			lastLogTime = time.Now()
+
+			// Clean up seen list
+			activeIDs := make(map[uint64]bool)
+			for _, t := range listResp.Transfers {
+				activeIDs[t.ID] = true
+			}
+			m.cleanupSeen(activeIDs)
+
+			// Log status periodically
+			if time.Since(lastLogTime) >= 60*time.Second {
+				m.logger.Infof("Active transfers: %d", len(listResp.Transfers))
+				for _, pt := range listResp.Transfers {
+					transfer := NewTransfer(m.config, &pt)
+					m.logger.Infof("  %s", transfer)
+				}
+				lastLogTime = time.Now()
+			}
 		}
 	}
 }
@@ -468,9 +563,13 @@ func (m *Manager) checkExistingTransfers() {
 			if m.isImported(transfer) {
 				m.logger.Infof("%s: already imported", transfer)
 				m.markSeen(transfer.TransferID)
-				m.transferChan <- TransferMessage{
+				select {
+				case <-m.ctx.Done():
+					return
+				case m.transferChan <- TransferMessage{
 					Type:     MessageImported,
 					Transfer: transfer,
+				}:
 				}
 			} else {
 				m.logger.Infof("%s: not imported yet", transfer)

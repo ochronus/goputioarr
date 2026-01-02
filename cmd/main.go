@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/ochronus/goputioarr/internal/config"
 	"github.com/ochronus/goputioarr/internal/download"
@@ -81,6 +84,9 @@ func main() {
 }
 
 func runProxy(cmd *cobra.Command, args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// Load configuration
 	cfg, err := config.Load(configPath)
 	if err != nil {
@@ -124,11 +130,12 @@ func runProxy(cmd *cobra.Command, args []string) error {
 
 	// Start download manager
 	downloadManager := download.NewManager(cfg, logger, putioClient, arrClients)
-	if err := downloadManager.Start(); err != nil {
+	if err := downloadManager.StartWithContext(ctx); err != nil {
 		return fmt.Errorf("failed to start download manager: %w", err)
 	}
+	defer downloadManager.Stop()
 
 	// Start HTTP server
 	server := http.NewServer(cfg, logger, putioClient)
-	return server.Start()
+	return server.StartWithContext(ctx)
 }
