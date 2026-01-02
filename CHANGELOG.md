@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.5.40
+## v0.5.41
 - Add `self-update` command that checks GitHub for a newer release matching the current OS/architecture and replaces the binary (with backup).
 - If already on the latest version, report and exit without changes.
 
