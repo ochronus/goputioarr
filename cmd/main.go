@@ -2,22 +2,31 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/ochronus/goputioarr/internal/app"
 	"github.com/ochronus/goputioarr/internal/config"
 	"github.com/ochronus/goputioarr/internal/download"
-	"github.com/ochronus/goputioarr/internal/http"
+	httpserver "github.com/ochronus/goputioarr/internal/http"
 	"github.com/ochronus/goputioarr/internal/utils"
 	"github.com/spf13/cobra"
 )
 
-const version = "0.5.38"
+const version = "0.5.40"
 
-var configPath string
+var (
+	configPath string
+	selfUpdate bool
+)
 
 func main() {
 	// Get default config path
@@ -40,6 +49,7 @@ func main() {
 		RunE:  runProxy,
 	}
 	runCmd.Flags().StringVarP(&configPath, "config", "c", defaultConfigPath, "Path to config file")
+	rootCmd.PersistentFlags().BoolVar(&selfUpdate, "self-update", false, "Check for a newer release on GitHub and replace the current binary")
 
 	// Get-token command
 	getTokenCmd := &cobra.Command{
@@ -82,6 +92,13 @@ func main() {
 }
 
 func runProxy(cmd *cobra.Command, args []string) error {
+	if selfUpdate {
+		if err := performSelfUpdate(); err != nil {
+			return fmt.Errorf("self-update failed: %w", err)
+		}
+		return nil
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -112,6 +129,100 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	defer downloadManager.Stop()
 
 	// Start HTTP server
-	server := http.NewServer(container)
+	server := httpserver.NewServer(container)
 	return server.StartWithContext(ctx)
+}
+
+func performSelfUpdate() error {
+	latestVersion, downloadURL, err := fetchLatestReleaseAssetURL()
+	if err != nil {
+		return err
+	}
+
+	currentVersion := strings.TrimPrefix(version, "v")
+	if latestVersion == currentVersion {
+		fmt.Printf("Already up to date (current: %s)\n", version)
+		return nil
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to locate current binary: %w", err)
+	}
+
+	dir := filepath.Dir(exePath)
+	tmpFile, err := os.CreateTemp(dir, "goputioarr-update-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	resp, err := http.Get(downloadURL)
+	if err != nil {
+		return fmt.Errorf("failed to download update: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status downloading update: %s", resp.Status)
+	}
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		return fmt.Errorf("failed to write update: %w", err)
+	}
+	if err := tmpFile.Chmod(0755); err != nil && runtime.GOOS != "windows" {
+		return fmt.Errorf("failed to make update executable: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to finalize update: %w", err)
+	}
+
+	backupPath := exePath + ".bak"
+	_ = os.Remove(backupPath)
+	if err := os.Rename(exePath, backupPath); err != nil {
+		return fmt.Errorf("failed to backup current binary: %w", err)
+	}
+	if err := os.Rename(tmpFile.Name(), exePath); err != nil {
+		return fmt.Errorf("failed to replace binary: %w", err)
+	}
+
+	fmt.Printf("Updated goputioarr from %s to %s\n", version, latestVersion)
+	return nil
+}
+
+func fetchLatestReleaseAssetURL() (string, string, error) {
+	const apiURL = "https://api.github.com/repos/ochronus/goputioarr/releases/latest"
+
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to query latest release: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("unexpected status from GitHub: %s", resp.Status)
+	}
+
+	var data struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", "", fmt.Errorf("failed to decode GitHub response: %w", err)
+	}
+
+	latest := strings.TrimPrefix(data.TagName, "v")
+	targetName := fmt.Sprintf("goputioarr-%s-%s", runtime.GOOS, runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		targetName += ".exe"
+	}
+
+	for _, asset := range data.Assets {
+		if asset.Name == targetName {
+			return latest, asset.BrowserDownloadURL, nil
+		}
+	}
+
+	return "", "", fmt.Errorf("no matching asset for %s/%s", runtime.GOOS, runtime.GOARCH)
 }

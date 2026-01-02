@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.40
+- Add `--self-update` flag that checks GitHub for a newer release matching the current OS/architecture and replaces the binary (with backup).
+- If already on the latest version, report and exit without changes.
+
+## v0.5.39
+- Add shared retry/backoff helper with structured retryable errors.
+- Arr and put.io clients retry 5xx/429, honor Retry-After, and expose consistent HTTP errors.
+- Tests cover backoff paths, Retry-After parsing, and non-retryable 4xx behavior.
+
 ## v0.5.38
 - Introduce lifecycle management with contexts for graceful shutdown of workers, tickers, and the HTTP server with a central cancellation point.
 - Centralize dependencies into a shared container struct and inject interfaces to improve testability.
