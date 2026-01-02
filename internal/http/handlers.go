@@ -50,6 +50,11 @@ func (h *Handler) RPCPost(c *gin.Context) {
 		return
 	}
 
+	if strings.TrimSpace(req.Method) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "method is required"})
+		return
+	}
+
 	var arguments interface{}
 	var err error
 
@@ -164,24 +169,17 @@ func (h *Handler) handleTorrentGet() (*transmission.TorrentGetResponse, error) {
 
 // handleTorrentAdd handles the torrent-add RPC method
 func (h *Handler) handleTorrentAdd(req *transmission.Request) error {
-	if req.Arguments == nil {
+	if len(req.Arguments) == 0 {
 		return nil
 	}
 
-	// Parse arguments as a map
-	argsBytes, err := json.Marshal(req.Arguments)
-	if err != nil {
+	var args transmission.TorrentAddArguments
+	if err := json.Unmarshal(req.Arguments, &args); err != nil {
 		return err
 	}
 
-	var args map[string]interface{}
-	if err := json.Unmarshal(argsBytes, &args); err != nil {
-		return err
-	}
-
-	if metainfo, ok := args["metainfo"].(string); ok {
-		// .torrent file encoded as base64
-		data, err := base64.StdEncoding.DecodeString(metainfo)
+	if args.Metainfo != "" {
+		data, err := base64.StdEncoding.DecodeString(args.Metainfo)
 		if err != nil {
 			return err
 		}
@@ -191,16 +189,17 @@ func (h *Handler) handleTorrentAdd(req *transmission.Request) error {
 		}
 
 		h.logger.Info("[ffff: unknown]: torrent uploaded")
-	} else if filename, ok := args["filename"].(string); ok {
-		// Magnet link
-		if err := h.putioClient.AddTransfer(filename); err != nil {
+		return nil
+	}
+
+	if args.Filename != "" {
+		if err := h.putioClient.AddTransfer(args.Filename); err != nil {
 			return err
 		}
 
-		// Try to extract name from magnet link
 		name := "unknown"
-		if strings.HasPrefix(filename, "magnet:") {
-			if parsed, err := url.Parse(filename); err == nil {
+		if strings.HasPrefix(args.Filename, "magnet:") {
+			if parsed, err := url.Parse(args.Filename); err == nil {
 				if dn := parsed.Query().Get("dn"); dn != "" {
 					if decoded, err := url.QueryUnescape(dn); err == nil {
 						name = decoded
@@ -217,21 +216,12 @@ func (h *Handler) handleTorrentAdd(req *transmission.Request) error {
 
 // handleTorrentRemove handles the torrent-remove RPC method
 func (h *Handler) handleTorrentRemove(req *transmission.Request) error {
-	if req.Arguments == nil {
+	if len(req.Arguments) == 0 {
 		return nil
 	}
 
-	// Parse arguments as a map
-	argsBytes, err := json.Marshal(req.Arguments)
-	if err != nil {
-		return err
-	}
-
-	var args struct {
-		IDs             []string `json:"ids"`
-		DeleteLocalData bool     `json:"delete-local-data"`
-	}
-	if err := json.Unmarshal(argsBytes, &args); err != nil {
+	var args transmission.TorrentRemoveArguments
+	if err := json.Unmarshal(req.Arguments, &args); err != nil {
 		return err
 	}
 

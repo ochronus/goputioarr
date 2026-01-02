@@ -102,6 +102,11 @@ func basicAuthHeader(username, password string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
 }
 
+func rawArgs(v interface{}) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return json.RawMessage(b)
+}
+
 func TestNewHandler(t *testing.T) {
 	handler := setupTestHandler()
 	if handler == nil {
@@ -510,10 +515,8 @@ func TestTorrentAddWithMetainfo(t *testing.T) {
 	torrentContent := base64.StdEncoding.EncodeToString([]byte("mock torrent data"))
 
 	req := &transmission.Request{
-		Method: "torrent-add",
-		Arguments: map[string]interface{}{
-			"metainfo": torrentContent,
-		},
+		Method:    "torrent-add",
+		Arguments: rawArgs(map[string]interface{}{"metainfo": torrentContent}),
 	}
 
 	// This will fail because we can't actually upload to put.io in tests
@@ -527,10 +530,8 @@ func TestTorrentAddWithMagnetLink(t *testing.T) {
 	magnetLink := "magnet:?xt=urn:btih:abc123&dn=Test+File"
 
 	req := &transmission.Request{
-		Method: "torrent-add",
-		Arguments: map[string]interface{}{
-			"filename": magnetLink,
-		},
+		Method:    "torrent-add",
+		Arguments: rawArgs(map[string]interface{}{"filename": magnetLink}),
 	}
 
 	// This will fail because we can't actually add to put.io in tests
@@ -542,10 +543,8 @@ func TestTorrentAddWithInvalidMetainfo(t *testing.T) {
 	handler := setupTestHandler()
 
 	req := &transmission.Request{
-		Method: "torrent-add",
-		Arguments: map[string]interface{}{
-			"metainfo": "!!!invalid-base64!!!",
-		},
+		Method:    "torrent-add",
+		Arguments: rawArgs(map[string]interface{}{"metainfo": "!!!invalid-base64!!!"}),
 	}
 
 	err := handler.handleTorrentAdd(req)
@@ -700,10 +699,8 @@ func TestTorrentAddMagnetWithEncodedName(t *testing.T) {
 	magnetLink := "magnet:?xt=urn:btih:abc123&dn=Test%20Movie%20%282024%29"
 
 	req := &transmission.Request{
-		Method: "torrent-add",
-		Arguments: map[string]interface{}{
-			"filename": magnetLink,
-		},
+		Method:    "torrent-add",
+		Arguments: rawArgs(map[string]interface{}{"filename": magnetLink}),
 	}
 
 	// This will fail to add to put.io but shouldn't panic
@@ -716,10 +713,8 @@ func TestTorrentAddMagnetWithoutName(t *testing.T) {
 	magnetLink := "magnet:?xt=urn:btih:abc123"
 
 	req := &transmission.Request{
-		Method: "torrent-add",
-		Arguments: map[string]interface{}{
-			"filename": magnetLink,
-		},
+		Method:    "torrent-add",
+		Arguments: rawArgs(map[string]interface{}{"filename": magnetLink}),
 	}
 
 	// This will fail to add to put.io but shouldn't panic

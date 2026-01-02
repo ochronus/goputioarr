@@ -1,6 +1,7 @@
 package transmission
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/ochronus/goputioarr/internal/services/putio"
@@ -14,8 +15,8 @@ type Response struct {
 
 // Request represents a Transmission RPC request
 type Request struct {
-	Method    string      `json:"method"`
-	Arguments interface{} `json:"arguments,omitempty"`
+	Method    string          `json:"method"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
 // Config represents Transmission session configuration

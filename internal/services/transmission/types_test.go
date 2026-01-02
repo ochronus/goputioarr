@@ -340,7 +340,7 @@ func TestResponseJSONOmitEmpty(t *testing.T) {
 func TestRequestJSON(t *testing.T) {
 	req := Request{
 		Method:    "torrent-get",
-		Arguments: map[string]interface{}{"fields": []string{"id", "name"}},
+		Arguments: json.RawMessage(`{"fields":["id","name"]}`),
 	}
 
 	data, err := json.Marshal(req)
@@ -470,6 +470,14 @@ func containsHelper(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func mustJSONMarshal(v interface{}) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 func TestDefaultConfigDifferentDownloadDirs(t *testing.T) {
@@ -660,14 +668,9 @@ func TestTorrentFromPutIOTransferError(t *testing.T) {
 }
 
 func TestRequestWithArguments(t *testing.T) {
-	args := map[string]interface{}{
-		"fields": []string{"id", "name", "status"},
-		"ids":    []int{1, 2, 3},
-	}
-
 	req := Request{
 		Method:    "torrent-get",
-		Arguments: args,
+		Arguments: json.RawMessage(mustJSONMarshal(map[string]interface{}{"fields": []string{"id", "name", "status"}, "ids": []int{1, 2, 3}})),
 	}
 
 	data, err := json.Marshal(req)

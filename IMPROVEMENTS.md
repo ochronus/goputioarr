@@ -5,7 +5,7 @@
 - [x] Centralize dependencies (config, logger, put.io client, Arr clients) into a small container struct; inject interfaces to improve testability.
 - [x] Add interfaces for put.io and Arr clients; mock them in tests to cover orchestration and HTTP handlers without network calls.
 - [x] Validate configuration more strictly: check download directory existence/permissions; enforce sane bounds on polling interval and worker counts.
-- Remove double JSON marshal/unmarshal in HTTP handlers by binding `Arguments` into typed structs.
+- [x] Remove double JSON marshal/unmarshal in HTTP handlers by binding `Arguments` into typed structs.
 
 ## Stability & Resilience
 - Add retry with backoff for put.io and Arr calls; treat 5xx/429 specially and emit structured errors.
