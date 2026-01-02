@@ -21,7 +21,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.5.40"
+var version = "dev"
 
 var (
 	configPath string
