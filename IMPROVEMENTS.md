@@ -8,18 +8,10 @@
 - [x] Remove double JSON marshal/unmarshal in HTTP handlers by binding `Arguments` into typed structs.
 
 ## Stability & Resilience
-- Add retry with backoff for put.io and Arr calls; treat 5xx/429 specially and emit structured errors.
+- [x] Add retry with backoff for put.io and Arr calls; treat 5xx/429 specially and emit structured errors.
 - Introduce stuck-transfer detection (e.g., long “DOWNLOADING” with no progress) with a configurable timeout.
-- Add jitter to polling to avoid thundering herd when multiple instances run.
 - Add a grace period before deleting local files after import to avoid races with Arr indexing.
-- Cap recursion depth/target count when generating download targets; log and skip pathological trees.
 
-## Performance & Memory
-- Reuse a single put.io client and prebuilt Arr clients across components.
-- Use a shared `http.Client` with timeouts and reuse for downloads instead of raw `http.Get`.
-- Stream target generation to the download queue, or explicitly `nil` `Transfer.Targets` after use to free memory.
-- Make Arr history page size configurable (lower defaults, e.g., 100–250) to trim allocations.
-- Consider webhooks from put.io to reduce polling frequency; fall back to polling as backup.
 
 ## User Experience & Features
 - Add CLI/HTTP status endpoints: `/health`, `/metrics` (Prometheus), and a “manual rescan” command.

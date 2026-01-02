@@ -2,10 +2,12 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -119,12 +121,49 @@ func (c *Config) Validate() error {
 	tmpFile.Close()
 	os.Remove(tmpFile.Name())
 
+	if c.Port < 1 || c.Port > 65535 {
+		return fmt.Errorf("port must be between 1 and 65535")
+	}
+	if _, err := logrus.ParseLevel(c.Loglevel); err != nil {
+		return fmt.Errorf("loglevel must be one of: panic, fatal, error, warn, info, debug, trace")
+	}
+
 	if c.Putio.APIKey == "" {
 		return fmt.Errorf("putio.api_key is required")
 	}
 	if c.Sonarr == nil && c.Radarr == nil && c.Whisparr == nil {
 		return fmt.Errorf("at least one of sonarr, radarr, or whisparr must be configured")
 	}
+
+	validateArr := func(name string, cfg *ArrConfig) error {
+		if cfg.URL == "" {
+			return fmt.Errorf("%s.url is required", name)
+		}
+		if _, err := url.ParseRequestURI(cfg.URL); err != nil {
+			return fmt.Errorf("%s.url is invalid: %v", name, err)
+		}
+		if cfg.APIKey == "" {
+			return fmt.Errorf("%s.api_key is required", name)
+		}
+		return nil
+	}
+
+	if c.Sonarr != nil {
+		if err := validateArr("sonarr", c.Sonarr); err != nil {
+			return err
+		}
+	}
+	if c.Radarr != nil {
+		if err := validateArr("radarr", c.Radarr); err != nil {
+			return err
+		}
+	}
+	if c.Whisparr != nil {
+		if err := validateArr("whisparr", c.Whisparr); err != nil {
+			return err
+		}
+	}
+
 	if c.PollingInterval < MinPollingInterval || c.PollingInterval > MaxPollingInterval {
 		return fmt.Errorf("polling_interval must be between %d and %d seconds", MinPollingInterval, MaxPollingInterval)
 	}

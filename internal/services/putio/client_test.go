@@ -2,10 +2,12 @@ package putio
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewClient(t *testing.T) {
@@ -440,6 +442,138 @@ func TestTransferWithAllFields(t *testing.T) {
 	}
 }
 
+// Retry/backoff tests for ListTransfers
+func TestListTransfersRetriesThenSucceedsOn5xx(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"transfers":[{"id":1,"status":"COMPLETED"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("token", WithBaseURLs(server.URL, server.URL), WithHTTPClient(server.Client()))
+	resp, err := client.ListTransfers()
+	if err != nil {
+		t.Fatalf("expected success after retry, got error: %v", err)
+	}
+	if len(resp.Transfers) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(resp.Transfers))
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts (1 retry), got %d", attempts)
+	}
+}
+
+func TestListTransfersRetriesOn429(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"transfers":[{"id":1,"status":"COMPLETED"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("token", WithBaseURLs(server.URL, server.URL), WithHTTPClient(server.Client()))
+	resp, err := client.ListTransfers()
+	if err != nil {
+		t.Fatalf("expected success after retry on 429, got error: %v", err)
+	}
+	if len(resp.Transfers) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(resp.Transfers))
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts (one retry on 429), got %d", attempts)
+	}
+}
+
+func TestListTransfersRespectsRetryAfter(t *testing.T) {
+	attempts := 0
+	var sleeps []time.Duration
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"transfers":[{"id":1,"status":"COMPLETED"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("token", WithBaseURLs(server.URL, server.URL), WithHTTPClient(server.Client()))
+	client.sleeper = func(d time.Duration) {
+		sleeps = append(sleeps, d)
+	}
+
+	resp, err := client.ListTransfers()
+	if err != nil {
+		t.Fatalf("expected success after honoring Retry-After, got error: %v", err)
+	}
+	if len(resp.Transfers) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(resp.Transfers))
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts (one retry on 429), got %d", attempts)
+	}
+	if len(sleeps) != 1 || sleeps[0] != time.Second {
+		t.Fatalf("expected one sleep of 1s from Retry-After, got %v", sleeps)
+	}
+}
+
+func TestListTransfersFailsAfterMaxRetries(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient("token", WithBaseURLs(server.URL, server.URL), WithHTTPClient(server.Client()))
+	_, err := client.ListTransfers()
+	if err == nil {
+		t.Fatal("expected error after exhausting retries, got nil")
+	}
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("expected HTTPError, got %T", err)
+	}
+	if attempts != maxRetries {
+		t.Fatalf("expected %d attempts, got %d", maxRetries, attempts)
+	}
+}
+
+func TestListTransfersDoesNotRetryOn400(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	client := NewClient("token", WithBaseURLs(server.URL, server.URL), WithHTTPClient(server.Client()))
+	_, err := client.ListTransfers()
+	if err == nil {
+		t.Fatal("expected error on 400, got nil")
+	}
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("expected HTTPError, got %T", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected no retries on 400, got %d attempts", attempts)
+	}
+}
+
 // Helper function to create pointer to int64
 func ptrInt64(v int64) *int64 {
 	return &v
@@ -697,8 +831,8 @@ func TestTransferErrorMessage(t *testing.T) {
 func TestNewClientHTTPClientTimeout(t *testing.T) {
 	client := NewClient("test-token")
 
-	if client.httpClient.Timeout != timeout {
-		t.Errorf("expected timeout %v, got %v", timeout, client.httpClient.Timeout)
+	if client.httpClient.Timeout != defaultTimeout {
+		t.Errorf("expected timeout %v, got %v", defaultTimeout, client.httpClient.Timeout)
 	}
 }
 

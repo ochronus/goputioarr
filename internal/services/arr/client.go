@@ -2,18 +2,26 @@ package arr
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/ochronus/goputioarr/internal/services/retry"
 )
 
-const timeout = 30 * time.Second
+const (
+	timeout     = 30 * time.Second
+	maxRetries  = 3
+	backoffBase = 200 * time.Millisecond
+)
 
 // Client represents an Arr (Sonarr/Radarr/Whisparr) API client
 type Client struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
+	sleeper    func(time.Duration)
 }
 
 var _ ClientAPI = (*Client)(nil)
@@ -26,6 +34,7 @@ func NewClient(baseURL, apiKey string) *Client {
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
+		sleeper: time.Sleep,
 	}
 }
 
@@ -41,16 +50,71 @@ type HistoryRecord struct {
 	Data      map[string]string `json:"data"`
 }
 
-// doRequest executes an HTTP request with the API key header
+type HTTPError struct {
+	URL        string
+	StatusCode int
+	Status     string
+	RetryAfter string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("url: %s, status: %s", e.URL, e.Status)
+}
+
+// doRequest executes an HTTP request with the API key header and retries with backoff on 5xx/429
 func (c *Client) doRequest(method, url string) (*http.Response, error) {
-	req, err := http.NewRequest(method, url, nil)
+	var respOut *http.Response
+
+	err := retry.Do(nil, retry.Config{
+		MaxRetries: maxRetries,
+		BaseDelay:  backoffBase,
+		ShouldRetry: func(err error) bool {
+			if err == nil {
+				return false
+			}
+			var httpErr *HTTPError
+			if errors.As(err, &httpErr) {
+				return httpErr.StatusCode == http.StatusTooManyRequests || httpErr.StatusCode >= 500
+			}
+			return true
+		},
+		DelayFunc: func(attempt int, err error) time.Duration {
+			fallback := backoffBase * time.Duration(1<<attempt)
+			var httpErr *HTTPError
+			if errors.As(err, &httpErr) && httpErr.RetryAfter != "" {
+				return retry.RetryAfterDelay(httpErr.RetryAfter, fallback)
+			}
+			return fallback
+		},
+		Sleeper: c.sleeper,
+	}, func(attempt int) error {
+		req, err := http.NewRequest(method, url, nil)
+		if err != nil {
+			return err
+		}
+
+		req.Header.Set("X-Api-Key", c.apiKey)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return err
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			retryAfter := resp.Header.Get("Retry-After")
+			resp.Body.Close()
+			return &HTTPError{URL: url, StatusCode: resp.StatusCode, Status: resp.Status, RetryAfter: retryAfter}
+		}
+
+		respOut = resp
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("X-Api-Key", c.apiKey)
-
-	return c.httpClient.Do(req)
+	return respOut, nil
 }
 
 // CheckImported checks if a file has been imported by checking the history
@@ -66,16 +130,18 @@ func (c *Client) CheckImported(targetPath string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return false, fmt.Errorf("url: %s, status: %s", url, resp.Status)
+			resp.Body.Close()
+			return false, &HTTPError{URL: url, StatusCode: resp.StatusCode, Status: resp.Status}
 		}
 
 		var historyResponse HistoryResponse
 		if err := json.NewDecoder(resp.Body).Decode(&historyResponse); err != nil {
+			resp.Body.Close()
 			return false, fmt.Errorf("url: %s, error decoding response: %w", url, err)
 		}
+		resp.Body.Close()
 
 		for _, record := range historyResponse.Records {
 			if record.EventType == "downloadFolderImported" {

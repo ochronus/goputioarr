@@ -2,9 +2,11 @@ package arr
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestNewClient(t *testing.T) {
@@ -638,5 +640,159 @@ func TestHistoryRecordWithNilData(t *testing.T) {
 
 	if record.Data != nil && len(record.Data) != 0 {
 		t.Errorf("expected nil or empty data, got %v", record.Data)
+	}
+}
+
+func TestCheckImportedRetriesThenSucceedsOn5xx(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{
+			"totalRecords": 1,
+			"records": [
+				{
+					"eventType": "downloadFolderImported",
+					"data": {"droppedPath": "/downloads/movie.mkv"}
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	result, err := client.CheckImported("/downloads/movie.mkv")
+
+	if err != nil {
+		t.Fatalf("expected success after retry, got error: %v", err)
+	}
+	if !result {
+		t.Fatal("expected imported to be true after retry")
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts (1 retry), got %d", attempts)
+	}
+}
+
+func TestCheckImportedRetriesAndFailsAfterMaxAttempts(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	result, err := client.CheckImported("/downloads/movie.mkv")
+
+	if err == nil {
+		t.Fatal("expected error after exhausting retries, got nil")
+	}
+	if _, ok := err.(*HTTPError); !ok {
+		t.Fatalf("expected HTTPError, got %T", err)
+	}
+	if result {
+		t.Fatal("expected result to be false after retries fail")
+	}
+	if attempts != maxRetries {
+		t.Fatalf("expected %d attempts, got %d", maxRetries, attempts)
+	}
+}
+
+func TestCheckImportedRetriesOn429(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{
+			"totalRecords": 1,
+			"records": [
+				{
+					"eventType": "downloadFolderImported",
+					"data": {"droppedPath": "/downloads/movie.mkv"}
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	result, err := client.CheckImported("/downloads/movie.mkv")
+	if err != nil {
+		t.Fatalf("expected success after retry on 429, got error: %v", err)
+	}
+	if !result {
+		t.Fatal("expected result to be true after retry on 429")
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts (one retry on 429), got %d", attempts)
+	}
+}
+
+func TestCheckImportedRespectsRetryAfter(t *testing.T) {
+	attempts := 0
+	var sleeps []time.Duration
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{
+			"totalRecords": 0,
+			"records": []
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	client.sleeper = func(d time.Duration) {
+		sleeps = append(sleeps, d)
+	}
+
+	_, err := client.CheckImported("/downloads/movie.mkv")
+	if err != nil {
+		t.Fatalf("expected success after respecting Retry-After, got error: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts (one retry on 429), got %d", attempts)
+	}
+	if len(sleeps) != 1 {
+		t.Fatalf("expected one recorded sleep, got %d", len(sleeps))
+	}
+	if sleeps[0] != time.Second {
+		t.Fatalf("expected sleep of 1s from Retry-After, got %v", sleeps[0])
+	}
+}
+
+func TestCheckImportedDoesNotRetryOn400(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	_, err := client.CheckImported("/downloads/movie.mkv")
+	if err == nil {
+		t.Fatal("expected error on 400, got nil")
+	}
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("expected HTTPError, got %T", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected no retries on 400, got %d attempts", attempts)
 	}
 }

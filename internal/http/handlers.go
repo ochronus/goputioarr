@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	_ "github.com/gin-gonic/gin/binding"
 	"github.com/ochronus/goputioarr/internal/app"
 	"github.com/ochronus/goputioarr/internal/config"
 	"github.com/ochronus/goputioarr/internal/services/putio"
@@ -17,7 +18,7 @@ import (
 
 const sessionID = "useless-session-id"
 
-// Handler contains the HTTP handlers for the Transmission RPC protocol
+// Handler contains the HTTP handlers for the Transmission RPC protocol.
 type Handler struct {
 	container   *app.Container
 	config      *config.Config
@@ -25,7 +26,7 @@ type Handler struct {
 	logger      *logrus.Logger
 }
 
-// NewHandler creates a new HTTP handler
+// NewHandler creates a new HTTP handler.
 func NewHandler(container *app.Container) *Handler {
 	return &Handler{
 		container:   container,
@@ -35,7 +36,7 @@ func NewHandler(container *app.Container) *Handler {
 	}
 }
 
-// RPCPost handles POST requests to the Transmission RPC endpoint
+// RPCPost handles POST requests to the Transmission RPC endpoint.
 func (h *Handler) RPCPost(c *gin.Context) {
 	// Validate user
 	if !h.validateUser(c) {
@@ -55,8 +56,10 @@ func (h *Handler) RPCPost(c *gin.Context) {
 		return
 	}
 
-	var arguments interface{}
-	var err error
+	var (
+		arguments interface{}
+		err       error
+	)
 
 	switch req.Method {
 	case "session-get":
@@ -110,7 +113,7 @@ func (h *Handler) RPCPost(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// RPCGet handles GET requests to the Transmission RPC endpoint (for authentication)
+// RPCGet handles GET requests to the Transmission RPC endpoint (for authentication).
 func (h *Handler) RPCGet(c *gin.Context) {
 	if !h.validateUser(c) {
 		c.Status(http.StatusForbidden)
@@ -121,7 +124,7 @@ func (h *Handler) RPCGet(c *gin.Context) {
 	c.Status(http.StatusConflict)
 }
 
-// validateUser validates the Basic Auth credentials
+// validateUser validates the Basic Auth credentials.
 func (h *Handler) validateUser(c *gin.Context) bool {
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
@@ -149,7 +152,7 @@ func (h *Handler) validateUser(c *gin.Context) bool {
 	return username == h.config.Username && password == h.config.Password
 }
 
-// handleTorrentGet handles the torrent-get RPC method
+// handleTorrentGet handles the torrent-get RPC method.
 func (h *Handler) handleTorrentGet() (*transmission.TorrentGetResponse, error) {
 	transfers, err := h.putioClient.ListTransfers()
 	if err != nil {
@@ -167,14 +170,10 @@ func (h *Handler) handleTorrentGet() (*transmission.TorrentGetResponse, error) {
 	}, nil
 }
 
-// handleTorrentAdd handles the torrent-add RPC method
+// handleTorrentAdd handles the torrent-add RPC method.
 func (h *Handler) handleTorrentAdd(req *transmission.Request) error {
-	if len(req.Arguments) == 0 {
-		return nil
-	}
-
 	var args transmission.TorrentAddArguments
-	if err := json.Unmarshal(req.Arguments, &args); err != nil {
+	if err := bindArguments(req, &args); err != nil {
 		return err
 	}
 
@@ -184,45 +183,40 @@ func (h *Handler) handleTorrentAdd(req *transmission.Request) error {
 			return err
 		}
 
-		if err := h.putioClient.UploadFile(data); err != nil {
-			return err
-		}
+		return h.putioClient.UploadFile(data)
+	}
 
-		h.logger.Info("[ffff: unknown]: torrent uploaded")
+	if args.Filename == "" {
 		return nil
 	}
 
-	if args.Filename != "" {
-		if err := h.putioClient.AddTransfer(args.Filename); err != nil {
-			return err
-		}
+	if err := h.putioClient.AddTransfer(args.Filename); err != nil {
+		return err
+	}
 
-		name := "unknown"
-		if strings.HasPrefix(args.Filename, "magnet:") {
-			if parsed, err := url.Parse(args.Filename); err == nil {
-				if dn := parsed.Query().Get("dn"); dn != "" {
-					if decoded, err := url.QueryUnescape(dn); err == nil {
-						name = decoded
-					}
+	name := "unknown"
+	if strings.HasPrefix(args.Filename, "magnet:") {
+		if parsed, err := url.Parse(args.Filename); err == nil {
+			if dn := parsed.Query().Get("dn"); dn != "" {
+				if decoded, err := url.QueryUnescape(dn); err == nil {
+					name = decoded
 				}
 			}
 		}
-
-		h.logger.Infof("[ffff: %s]: magnet link uploaded", name)
 	}
 
+	h.logger.Infof("[ffff: %s]: magnet link uploaded", name)
 	return nil
 }
 
-// handleTorrentRemove handles the torrent-remove RPC method
+// handleTorrentRemove handles the torrent-remove RPC method.
 func (h *Handler) handleTorrentRemove(req *transmission.Request) error {
-	if len(req.Arguments) == 0 {
-		return nil
-	}
-
 	var args transmission.TorrentRemoveArguments
-	if err := json.Unmarshal(req.Arguments, &args); err != nil {
+	if err := bindArguments(req, &args); err != nil {
 		return err
+	}
+	if len(args.IDs) == 0 {
+		return nil
 	}
 
 	// Get all transfers to match by hash
@@ -258,4 +252,11 @@ func (h *Handler) handleTorrentRemove(req *transmission.Request) error {
 	}
 
 	return nil
+}
+
+func bindArguments[T any](req *transmission.Request, dest *T) error {
+	if len(req.Arguments) == 0 {
+		return nil
+	}
+	return json.Unmarshal(req.Arguments, dest)
 }
