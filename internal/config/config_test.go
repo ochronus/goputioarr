@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -168,108 +170,219 @@ password = incomplete
 }
 
 func TestConfigValidate(t *testing.T) {
+	validDir := t.TempDir()
+
+	fileAsDir := filepath.Join(validDir, "notadir")
+	if err := os.WriteFile(fileAsDir, []byte("file"), 0644); err != nil {
+		t.Fatalf("failed to create file for dir test: %v", err)
+	}
+
+	nonWritableDir := filepath.Join(validDir, "nonwritable")
+	if err := os.Mkdir(nonWritableDir, 0500); err != nil {
+		t.Fatalf("failed to create non-writable dir: %v", err)
+	}
+	t.Cleanup(func() {
+		os.Chmod(nonWritableDir, 0700)
+	})
+
+	baseValid := func() *Config {
+		cfg := DefaultConfig()
+		cfg.Username = "user"
+		cfg.Password = "pass"
+		cfg.DownloadDirectory = validDir
+		cfg.Putio = PutioConfig{APIKey: "key"}
+		cfg.Sonarr = &ArrConfig{URL: "http://localhost", APIKey: "key"}
+		return cfg
+	}
+
 	tests := []struct {
-		name    string
-		config  *Config
-		wantErr bool
-		errMsg  string
+		name        string
+		build       func() *Config
+		wantErr     bool
+		errMsg      string
+		errContains bool
 	}{
 		{
 			name: "valid config with sonarr",
-			config: &Config{
-				Username:          "user",
-				Password:          "pass",
-				DownloadDirectory: "/downloads",
-				Putio:             PutioConfig{APIKey: "key"},
-				Sonarr:            &ArrConfig{URL: "http://localhost", APIKey: "key"},
+			build: func() *Config {
+				return baseValid()
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid config with radarr",
-			config: &Config{
-				Username:          "user",
-				Password:          "pass",
-				DownloadDirectory: "/downloads",
-				Putio:             PutioConfig{APIKey: "key"},
-				Radarr:            &ArrConfig{URL: "http://localhost", APIKey: "key"},
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.Sonarr = nil
+				cfg.Radarr = &ArrConfig{URL: "http://localhost", APIKey: "key"}
+				return cfg
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid config with whisparr",
-			config: &Config{
-				Username:          "user",
-				Password:          "pass",
-				DownloadDirectory: "/downloads",
-				Putio:             PutioConfig{APIKey: "key"},
-				Whisparr:          &ArrConfig{URL: "http://localhost", APIKey: "key"},
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.Sonarr = nil
+				cfg.Whisparr = &ArrConfig{URL: "http://localhost", APIKey: "key"}
+				return cfg
 			},
 			wantErr: false,
 		},
 		{
 			name: "missing username",
-			config: &Config{
-				Password:          "pass",
-				DownloadDirectory: "/downloads",
-				Putio:             PutioConfig{APIKey: "key"},
-				Sonarr:            &ArrConfig{URL: "http://localhost", APIKey: "key"},
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.Username = ""
+				return cfg
 			},
 			wantErr: true,
 			errMsg:  "username is required",
 		},
 		{
 			name: "missing password",
-			config: &Config{
-				Username:          "user",
-				DownloadDirectory: "/downloads",
-				Putio:             PutioConfig{APIKey: "key"},
-				Sonarr:            &ArrConfig{URL: "http://localhost", APIKey: "key"},
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.Password = ""
+				return cfg
 			},
 			wantErr: true,
 			errMsg:  "password is required",
 		},
 		{
 			name: "missing download_directory",
-			config: &Config{
-				Username: "user",
-				Password: "pass",
-				Putio:    PutioConfig{APIKey: "key"},
-				Sonarr:   &ArrConfig{URL: "http://localhost", APIKey: "key"},
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.DownloadDirectory = ""
+				return cfg
 			},
 			wantErr: true,
 			errMsg:  "download_directory is required",
 		},
 		{
 			name: "missing putio api_key",
-			config: &Config{
-				Username:          "user",
-				Password:          "pass",
-				DownloadDirectory: "/downloads",
-				Sonarr:            &ArrConfig{URL: "http://localhost", APIKey: "key"},
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.Putio = PutioConfig{}
+				return cfg
 			},
 			wantErr: true,
 			errMsg:  "putio.api_key is required",
 		},
 		{
 			name: "no arr configured",
-			config: &Config{
-				Username:          "user",
-				Password:          "pass",
-				DownloadDirectory: "/downloads",
-				Putio:             PutioConfig{APIKey: "key"},
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.Sonarr = nil
+				return cfg
 			},
 			wantErr: true,
 			errMsg:  "at least one of sonarr, radarr, or whisparr must be configured",
+		},
+		{
+			name: "download_directory does not exist",
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.DownloadDirectory = filepath.Join(validDir, "missing")
+				return cfg
+			},
+			wantErr: true,
+			errMsg:  fmt.Sprintf("download_directory does not exist: %s", filepath.Join(validDir, "missing")),
+		},
+		{
+			name: "download_directory not a directory",
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.DownloadDirectory = fileAsDir
+				return cfg
+			},
+			wantErr: true,
+			errMsg:  fmt.Sprintf("download_directory is not a directory: %s", fileAsDir),
+		},
+		{
+			name: "download_directory not writable",
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.DownloadDirectory = nonWritableDir
+				return cfg
+			},
+			wantErr:     true,
+			errMsg:      "download_directory is not writable",
+			errContains: true,
+		},
+		{
+			name: "polling_interval too low",
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.PollingInterval = MinPollingInterval - 1
+				return cfg
+			},
+			wantErr: true,
+			errMsg:  fmt.Sprintf("polling_interval must be between %d and %d seconds", MinPollingInterval, MaxPollingInterval),
+		},
+		{
+			name: "polling_interval too high",
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.PollingInterval = MaxPollingInterval + 1
+				return cfg
+			},
+			wantErr: true,
+			errMsg:  fmt.Sprintf("polling_interval must be between %d and %d seconds", MinPollingInterval, MaxPollingInterval),
+		},
+		{
+			name: "download_workers too low",
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.DownloadWorkers = MinDownloadWorkers - 1
+				return cfg
+			},
+			wantErr: true,
+			errMsg:  fmt.Sprintf("download_workers must be between %d and %d", MinDownloadWorkers, MaxDownloadWorkers),
+		},
+		{
+			name: "download_workers too high",
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.DownloadWorkers = MaxDownloadWorkers + 1
+				return cfg
+			},
+			wantErr: true,
+			errMsg:  fmt.Sprintf("download_workers must be between %d and %d", MinDownloadWorkers, MaxDownloadWorkers),
+		},
+		{
+			name: "orchestration_workers too low",
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.OrchestrationWorkers = MinOrchestrationWorkers - 1
+				return cfg
+			},
+			wantErr: true,
+			errMsg:  fmt.Sprintf("orchestration_workers must be between %d and %d", MinOrchestrationWorkers, MaxOrchestrationWorkers),
+		},
+		{
+			name: "orchestration_workers too high",
+			build: func() *Config {
+				cfg := baseValid()
+				cfg.OrchestrationWorkers = MaxOrchestrationWorkers + 1
+				return cfg
+			},
+			wantErr: true,
+			errMsg:  fmt.Sprintf("orchestration_workers must be between %d and %d", MinOrchestrationWorkers, MaxOrchestrationWorkers),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
+			cfg := tt.build()
+			err := cfg.Validate()
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("expected error containing '%s', got nil", tt.errMsg)
+				} else if tt.errContains {
+					if !strings.Contains(err.Error(), tt.errMsg) {
+						t.Errorf("expected error containing '%s', got '%s'", tt.errMsg, err.Error())
+					}
 				} else if err.Error() != tt.errMsg {
 					t.Errorf("expected error '%s', got '%s'", tt.errMsg, err.Error())
 				}

@@ -8,6 +8,15 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+const (
+	MinPollingInterval      = 1
+	MaxPollingInterval      = 3600
+	MinDownloadWorkers      = 1
+	MaxDownloadWorkers      = 100
+	MinOrchestrationWorkers = 1
+	MaxOrchestrationWorkers = 100
+)
+
 // Config represents the main application configuration
 type Config struct {
 	BindAddress          string      `toml:"bind_address"`
@@ -92,11 +101,38 @@ func (c *Config) Validate() error {
 	if c.DownloadDirectory == "" {
 		return fmt.Errorf("download_directory is required")
 	}
+
+	info, err := os.Stat(c.DownloadDirectory)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("download_directory does not exist: %s", c.DownloadDirectory)
+		}
+		return fmt.Errorf("unable to stat download_directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("download_directory is not a directory: %s", c.DownloadDirectory)
+	}
+	tmpFile, err := os.CreateTemp(c.DownloadDirectory, ".goputioarr-perm-*")
+	if err != nil {
+		return fmt.Errorf("download_directory is not writable: %w", err)
+	}
+	tmpFile.Close()
+	os.Remove(tmpFile.Name())
+
 	if c.Putio.APIKey == "" {
 		return fmt.Errorf("putio.api_key is required")
 	}
 	if c.Sonarr == nil && c.Radarr == nil && c.Whisparr == nil {
 		return fmt.Errorf("at least one of sonarr, radarr, or whisparr must be configured")
+	}
+	if c.PollingInterval < MinPollingInterval || c.PollingInterval > MaxPollingInterval {
+		return fmt.Errorf("polling_interval must be between %d and %d seconds", MinPollingInterval, MaxPollingInterval)
+	}
+	if c.DownloadWorkers < MinDownloadWorkers || c.DownloadWorkers > MaxDownloadWorkers {
+		return fmt.Errorf("download_workers must be between %d and %d", MinDownloadWorkers, MaxDownloadWorkers)
+	}
+	if c.OrchestrationWorkers < MinOrchestrationWorkers || c.OrchestrationWorkers > MaxOrchestrationWorkers {
+		return fmt.Errorf("orchestration_workers must be between %d and %d", MinOrchestrationWorkers, MaxOrchestrationWorkers)
 	}
 
 	return nil
