@@ -28,7 +28,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Cache Go modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cache/go-build
@@ -77,7 +77,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Cache Go modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cache/go-build
@@ -96,7 +96,7 @@ jobs:
           go build -ldflags="-s -w -X main.version=${VERSION}" -o goputioarr-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.extension }} ./cmd
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: goputioarr-${{ matrix.goos }}-${{ matrix.goarch }}
           path: goputioarr-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.extension }}
@@ -113,7 +113,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
 
