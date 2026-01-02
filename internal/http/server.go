@@ -22,7 +22,7 @@ type Server struct {
 }
 
 // NewServer creates a new HTTP server
-func NewServer(cfg *config.Config, logger *logrus.Logger, putioClient *putio.Client) *Server {
+func NewServer(cfg *config.Config, logger *logrus.Logger, putioClient putio.ClientAPI) *Server {
 	// Set gin mode based on log level
 	if cfg.Loglevel != "debug" {
 		gin.SetMode(gin.ReleaseMode)

@@ -115,13 +115,14 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build shared clients
-	putioClient := putio.NewClient(cfg.Putio.APIKey)
+	var putioClient putio.ClientAPI = putio.NewClient(cfg.Putio.APIKey)
 	if _, err := putioClient.GetAccountInfo(); err != nil {
 		return fmt.Errorf("failed to verify put.io API key: %w", err)
 	}
 
-	var arrClients []download.ArrServiceClient
-	for _, svc := range cfg.GetArrConfigs() {
+	arrConfigs := cfg.GetArrConfigs()
+	arrClients := make([]download.ArrServiceClient, 0, len(arrConfigs))
+	for _, svc := range arrConfigs {
 		arrClients = append(arrClients, download.ArrServiceClient{
 			Name:   svc.Name,
 			Client: arr.NewClient(svc.URL, svc.APIKey),

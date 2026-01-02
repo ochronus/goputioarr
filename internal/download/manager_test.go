@@ -13,6 +13,128 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type mockPutioClient struct {
+	listFilesResp *putio.ListFileResponse
+	listFilesByID map[int64]*putio.ListFileResponse
+	fileURLs      map[int64]string
+}
+
+func (m *mockPutioClient) GetAccountInfo() (*putio.AccountInfoResponse, error) {
+	return &putio.AccountInfoResponse{}, nil
+}
+
+func (m *mockPutioClient) ListTransfers() (*putio.ListTransferResponse, error) {
+	return &putio.ListTransferResponse{Transfers: []putio.Transfer{}}, nil
+}
+
+func (m *mockPutioClient) GetTransfer(transferID uint64) (*putio.GetTransferResponse, error) {
+	return &putio.GetTransferResponse{}, nil
+}
+
+func (m *mockPutioClient) RemoveTransfer(transferID uint64) error { return nil }
+
+func (m *mockPutioClient) DeleteFile(fileID int64) error { return nil }
+
+func (m *mockPutioClient) AddTransfer(url string) error { return nil }
+
+func (m *mockPutioClient) UploadFile(data []byte) error { return nil }
+
+func (m *mockPutioClient) ListFiles(fileID int64) (*putio.ListFileResponse, error) {
+	if m.listFilesByID != nil {
+		if resp, ok := m.listFilesByID[fileID]; ok {
+			return resp, nil
+		}
+	}
+	if m.listFilesResp != nil {
+		return m.listFilesResp, nil
+	}
+	return &putio.ListFileResponse{
+		Files:  []putio.FileResponse{},
+		Parent: putio.FileResponse{Name: "parent", FileType: "FOLDER"},
+	}, nil
+}
+
+func (m *mockPutioClient) GetFileURL(fileID int64) (string, error) {
+	if m.fileURLs != nil {
+		if url, ok := m.fileURLs[fileID]; ok {
+			return url, nil
+		}
+	}
+	return "", nil
+}
+
+type mockArrClient struct {
+	imported bool
+	err      error
+}
+
+func (m *mockArrClient) CheckImported(targetPath string) (bool, error) {
+	return m.imported, m.err
+}
+
+func TestRecurseDownloadTargetsWithMocks(t *testing.T) {
+	manager := setupTestManager()
+
+	mockPutio := &mockPutioClient{
+		listFilesByID: map[int64]*putio.ListFileResponse{
+			100: {
+				Parent: putio.FileResponse{ID: 100, Name: "root", FileType: "FOLDER"},
+				Files: []putio.FileResponse{
+					{ID: 200, Name: "movie.mkv", FileType: "VIDEO"},
+				},
+			},
+			200: {
+				Parent: putio.FileResponse{ID: 200, Name: "movie.mkv", FileType: "VIDEO"},
+				Files:  []putio.FileResponse{},
+			},
+		},
+		fileURLs: map[int64]string{
+			100: "",
+			200: "http://example.com/movie.mkv",
+		},
+	}
+	manager.putioClient = mockPutio
+
+	targets, err := manager.recurseDownloadTargets(100, "hash123", "/downloads", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets (dir + file), got %d", len(targets))
+	}
+
+	if targets[0].TargetType != TargetTypeDirectory || targets[0].To != filepath.Join("/downloads", "root") {
+		t.Errorf("unexpected directory target: %+v", targets[0])
+	}
+	if targets[1].TargetType != TargetTypeFile || targets[1].From != "http://example.com/movie.mkv" {
+		t.Errorf("unexpected file target: %+v", targets[1])
+	}
+	if !targets[0].TopLevel || targets[1].TopLevel {
+		t.Errorf("top level flags not set correctly: %+v %+v", targets[0], targets[1])
+	}
+}
+
+func TestIsImportedWithMockArrClient(t *testing.T) {
+	manager := setupTestManager()
+
+	manager.arrClients = []ArrServiceClient{
+		{Name: "sonarr", Client: &mockArrClient{imported: true}},
+	}
+
+	transfer := &Transfer{
+		Name:       "Test Transfer",
+		TransferID: 123,
+	}
+	transfer.SetTargets([]DownloadTarget{
+		{To: "/downloads/file.mkv", TargetType: TargetTypeFile},
+	})
+
+	if !manager.isImported(transfer) {
+		t.Fatalf("expected transfer to be marked as imported")
+	}
+}
+
 func setupTestManager() *Manager {
 	cfg := &config.Config{
 		DownloadDirectory:    "/downloads",
@@ -28,7 +150,7 @@ func setupTestManager() *Manager {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
 
-	return NewManager(cfg, logger, putio.NewClient(cfg.Putio.APIKey), nil)
+	return NewManager(cfg, logger, &mockPutioClient{}, nil)
 }
 
 func TestNewManager(t *testing.T) {
@@ -464,7 +586,7 @@ func TestManagerConfigReference(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
 
-	manager := NewManager(cfg, logger, putio.NewClient(cfg.Putio.APIKey), nil)
+	manager := NewManager(cfg, logger, &mockPutioClient{}, nil)
 
 	if manager.config.DownloadDirectory != "/original" {
 		t.Errorf("expected download directory '/original', got '%s'", manager.config.DownloadDirectory)
@@ -534,7 +656,7 @@ func TestIsImportedNoServices(t *testing.T) {
 	}
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
-	manager := NewManager(cfg, logger, putio.NewClient(cfg.Putio.APIKey), nil)
+	manager := NewManager(cfg, logger, &mockPutioClient{}, nil)
 
 	transfer := &Transfer{
 		Name:       "Test Transfer",
@@ -575,7 +697,7 @@ func TestManagerWithDifferentConfigs(t *testing.T) {
 			logger := logrus.New()
 			logger.SetLevel(logrus.ErrorLevel)
 
-			manager := NewManager(cfg, logger, putio.NewClient(cfg.Putio.APIKey), nil)
+			manager := NewManager(cfg, logger, &mockPutioClient{}, nil)
 
 			if manager.config.DownloadWorkers != tt.downloadWorkers {
 				t.Errorf("expected DownloadWorkers %d, got %d", tt.downloadWorkers, manager.config.DownloadWorkers)
@@ -675,7 +797,7 @@ func TestManagerLoggerLevel(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
 
-	manager := NewManager(cfg, logger, putio.NewClient(cfg.Putio.APIKey), nil)
+	manager := NewManager(cfg, logger, &mockPutioClient{}, nil)
 
 	if manager.logger.Level != logrus.DebugLevel {
 		t.Errorf("expected logger level DebugLevel, got %v", manager.logger.Level)
@@ -755,7 +877,7 @@ func TestManagerSkipDirectoriesConfig(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
 
-	manager := NewManager(cfg, logger, putio.NewClient(cfg.Putio.APIKey), nil)
+	manager := NewManager(cfg, logger, &mockPutioClient{}, nil)
 
 	if len(manager.config.SkipDirectories) != 3 {
 		t.Errorf("expected 3 skip directories, got %d", len(manager.config.SkipDirectories))

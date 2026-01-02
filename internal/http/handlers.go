@@ -19,12 +19,12 @@ const sessionID = "useless-session-id"
 // Handler contains the HTTP handlers for the Transmission RPC protocol
 type Handler struct {
 	config      *config.Config
-	putioClient *putio.Client
+	putioClient putio.ClientAPI
 	logger      *logrus.Logger
 }
 
 // NewHandler creates a new HTTP handler
-func NewHandler(cfg *config.Config, logger *logrus.Logger, putioClient *putio.Client) *Handler {
+func NewHandler(cfg *config.Config, logger *logrus.Logger, putioClient putio.ClientAPI) *Handler {
 	return &Handler{
 		config:      cfg,
 		putioClient: putioClient,

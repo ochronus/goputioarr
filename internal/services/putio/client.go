@@ -23,6 +23,8 @@ type Client struct {
 	httpClient *http.Client
 }
 
+var _ ClientAPI = (*Client)(nil)
+
 // NewClient creates a new Put.io client
 func NewClient(apiToken string) *Client {
 	return &Client{

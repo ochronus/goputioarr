@@ -19,12 +19,12 @@ import (
 // Manager handles the download orchestration
 type ArrServiceClient struct {
 	Name   string
-	Client *arr.Client
+	Client arr.ClientAPI
 }
 
 type Manager struct {
 	config       *config.Config
-	putioClient  *putio.Client
+	putioClient  putio.ClientAPI
 	arrClients   []ArrServiceClient
 	transferChan chan TransferMessage
 	downloadChan chan DownloadTargetMessage
@@ -38,7 +38,7 @@ type Manager struct {
 }
 
 // NewManager creates a new download manager
-func NewManager(cfg *config.Config, logger *logrus.Logger, putioClient *putio.Client, arrClients []ArrServiceClient) *Manager {
+func NewManager(cfg *config.Config, logger *logrus.Logger, putioClient putio.ClientAPI, arrClients []ArrServiceClient) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Manager{

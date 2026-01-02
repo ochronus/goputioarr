@@ -19,6 +19,53 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+type mockPutioClient struct {
+	transfersResp *putio.ListTransferResponse
+	uploadErr     error
+	addErr        error
+	removeErr     error
+	deleteErr     error
+}
+
+func (m *mockPutioClient) GetAccountInfo() (*putio.AccountInfoResponse, error) {
+	return &putio.AccountInfoResponse{}, nil
+}
+
+func (m *mockPutioClient) ListTransfers() (*putio.ListTransferResponse, error) {
+	if m.transfersResp != nil {
+		return m.transfersResp, nil
+	}
+	return &putio.ListTransferResponse{Transfers: []putio.Transfer{}}, nil
+}
+
+func (m *mockPutioClient) GetTransfer(transferID uint64) (*putio.GetTransferResponse, error) {
+	return &putio.GetTransferResponse{}, nil
+}
+
+func (m *mockPutioClient) RemoveTransfer(transferID uint64) error {
+	return m.removeErr
+}
+
+func (m *mockPutioClient) DeleteFile(fileID int64) error {
+	return m.deleteErr
+}
+
+func (m *mockPutioClient) AddTransfer(url string) error {
+	return m.addErr
+}
+
+func (m *mockPutioClient) UploadFile(data []byte) error {
+	return m.uploadErr
+}
+
+func (m *mockPutioClient) ListFiles(fileID int64) (*putio.ListFileResponse, error) {
+	return &putio.ListFileResponse{}, nil
+}
+
+func (m *mockPutioClient) GetFileURL(fileID int64) (string, error) {
+	return "", nil
+}
+
 func setupTestHandler() *Handler {
 	cfg := &config.Config{
 		Username:          "testuser",
@@ -31,7 +78,7 @@ func setupTestHandler() *Handler {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel) // Suppress log output during tests
 
-	putioClient := putio.NewClient(cfg.Putio.APIKey)
+	putioClient := &mockPutioClient{}
 
 	return NewHandler(cfg, logger, putioClient)
 }
@@ -742,7 +789,7 @@ func TestHandlerConfigDownloadDirectory(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
 
-	handler := NewHandler(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
+	handler := NewHandler(cfg, logger, &mockPutioClient{})
 
 	if handler.config.DownloadDirectory != "/custom/downloads" {
 		t.Errorf("expected DownloadDirectory '/custom/downloads', got '%s'", handler.config.DownloadDirectory)

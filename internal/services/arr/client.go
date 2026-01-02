@@ -16,6 +16,8 @@ type Client struct {
 	httpClient *http.Client
 }
 
+var _ ClientAPI = (*Client)(nil)
+
 // NewClient creates a new Arr client
 func NewClient(baseURL, apiKey string) *Client {
 	return &Client{
