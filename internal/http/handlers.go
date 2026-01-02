@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ochronus/goputioarr/internal/app"
 	"github.com/ochronus/goputioarr/internal/config"
 	"github.com/ochronus/goputioarr/internal/services/putio"
 	"github.com/ochronus/goputioarr/internal/services/transmission"
@@ -18,17 +19,19 @@ const sessionID = "useless-session-id"
 
 // Handler contains the HTTP handlers for the Transmission RPC protocol
 type Handler struct {
+	container   *app.Container
 	config      *config.Config
 	putioClient putio.ClientAPI
 	logger      *logrus.Logger
 }
 
 // NewHandler creates a new HTTP handler
-func NewHandler(cfg *config.Config, logger *logrus.Logger, putioClient putio.ClientAPI) *Handler {
+func NewHandler(container *app.Container) *Handler {
 	return &Handler{
-		config:      cfg,
-		putioClient: putioClient,
-		logger:      logger,
+		container:   container,
+		config:      container.Config,
+		putioClient: container.PutioClient,
+		logger:      container.Logger,
 	}
 }
 

@@ -10,22 +10,21 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ochronus/goputioarr/internal/app"
 	"github.com/ochronus/goputioarr/internal/config"
-	"github.com/ochronus/goputioarr/internal/services/arr"
 	"github.com/ochronus/goputioarr/internal/services/putio"
 	"github.com/sirupsen/logrus"
 )
 
-// Manager handles the download orchestration
-type ArrServiceClient struct {
-	Name   string
-	Client arr.ClientAPI
-}
+// ArrServiceClient is kept for backward compatibility with existing references.
+type ArrServiceClient = app.ArrServiceClient
 
+// Manager handles the download orchestration
 type Manager struct {
+	container    *app.Container
 	config       *config.Config
 	putioClient  putio.ClientAPI
-	arrClients   []ArrServiceClient
+	arrClients   []app.ArrServiceClient
 	transferChan chan TransferMessage
 	downloadChan chan DownloadTargetMessage
 	seen         map[uint64]bool
@@ -38,17 +37,18 @@ type Manager struct {
 }
 
 // NewManager creates a new download manager
-func NewManager(cfg *config.Config, logger *logrus.Logger, putioClient putio.ClientAPI, arrClients []ArrServiceClient) *Manager {
+func NewManager(container *app.Container) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Manager{
-		config:       cfg,
-		putioClient:  putioClient,
-		arrClients:   arrClients,
+		container:    container,
+		config:       container.Config,
+		putioClient:  container.PutioClient,
+		arrClients:   container.ArrClients,
 		transferChan: make(chan TransferMessage, 100),
 		downloadChan: make(chan DownloadTargetMessage, 100),
 		seen:         make(map[uint64]bool),
-		logger:       logger,
+		logger:       container.Logger,
 		ctx:          ctx,
 		cancel:       cancel,
 	}

@@ -7,22 +7,25 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ochronus/goputioarr/internal/app"
 	"github.com/ochronus/goputioarr/internal/config"
-	"github.com/ochronus/goputioarr/internal/services/putio"
 	"github.com/sirupsen/logrus"
 )
 
 // Server represents the HTTP server
 type Server struct {
-	config  *config.Config
-	handler *Handler
-	logger  *logrus.Logger
-	router  *gin.Engine
-	srv     *http.Server
+	container *app.Container
+	config    *config.Config
+	handler   *Handler
+	logger    *logrus.Logger
+	router    *gin.Engine
+	srv       *http.Server
 }
 
 // NewServer creates a new HTTP server
-func NewServer(cfg *config.Config, logger *logrus.Logger, putioClient putio.ClientAPI) *Server {
+func NewServer(container *app.Container) *Server {
+	cfg := container.Config
+
 	// Set gin mode based on log level
 	if cfg.Loglevel != "debug" {
 		gin.SetMode(gin.ReleaseMode)
@@ -38,17 +41,18 @@ func NewServer(cfg *config.Config, logger *logrus.Logger, putioClient putio.Clie
 		c.Next()
 	})
 
-	handler := NewHandler(cfg, logger, putioClient)
+	handler := NewHandler(container)
 
 	// Register routes
 	router.POST("/transmission/rpc", handler.RPCPost)
 	router.GET("/transmission/rpc", handler.RPCGet)
 
 	return &Server{
-		config:  cfg,
-		handler: handler,
-		logger:  logger,
-		router:  router,
+		container: container,
+		config:    cfg,
+		handler:   handler,
+		logger:    container.Logger,
+		router:    router,
 	}
 }
 

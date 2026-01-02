@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ochronus/goputioarr/internal/app"
 	"github.com/ochronus/goputioarr/internal/config"
 	"github.com/ochronus/goputioarr/internal/services/putio"
 	"github.com/sirupsen/logrus"
@@ -28,7 +29,14 @@ func TestServerGracefulShutdownWithContext(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.PanicLevel) // silence output in tests
 
-	s := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
+	container := &app.Container{
+		Config:        cfg,
+		Logger:        logger,
+		PutioClient:   putio.NewClient(cfg.Putio.APIKey),
+		ValidatePutio: false,
+	}
+
+	s := NewServer(container)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

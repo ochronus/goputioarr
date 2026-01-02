@@ -7,13 +7,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/ochronus/goputioarr/internal/app"
 	"github.com/ochronus/goputioarr/internal/config"
 	"github.com/ochronus/goputioarr/internal/download"
 	"github.com/ochronus/goputioarr/internal/http"
-	"github.com/ochronus/goputioarr/internal/services/arr"
-	"github.com/ochronus/goputioarr/internal/services/putio"
 	"github.com/ochronus/goputioarr/internal/utils"
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -93,50 +91,27 @@ func runProxy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Set up logger
-	logger := logrus.New()
-	logger.SetFormatter(&logrus.TextFormatter{
-		FullTimestamp:   true,
-		TimestampFormat: "2006-01-02 15:04:05",
-	})
-
-	// Parse log level
-	level, err := logrus.ParseLevel(cfg.Loglevel)
-	if err != nil {
-		level = logrus.InfoLevel
-	}
-	logger.SetLevel(level)
-
-	logger.Infof("Starting goputioarr, version %s", version)
-
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// Build shared clients
-	var putioClient putio.ClientAPI = putio.NewClient(cfg.Putio.APIKey)
-	if _, err := putioClient.GetAccountInfo(); err != nil {
-		return fmt.Errorf("failed to verify put.io API key: %w", err)
+	// Build container with shared dependencies
+	container, err := app.NewContainer(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to build container: %w", err)
 	}
 
-	arrConfigs := cfg.GetArrConfigs()
-	arrClients := make([]download.ArrServiceClient, 0, len(arrConfigs))
-	for _, svc := range arrConfigs {
-		arrClients = append(arrClients, download.ArrServiceClient{
-			Name:   svc.Name,
-			Client: arr.NewClient(svc.URL, svc.APIKey),
-		})
-	}
+	container.Logger.Infof("Starting goputioarr, version %s", version)
 
 	// Start download manager
-	downloadManager := download.NewManager(cfg, logger, putioClient, arrClients)
+	downloadManager := download.NewManager(container)
 	if err := downloadManager.StartWithContext(ctx); err != nil {
 		return fmt.Errorf("failed to start download manager: %w", err)
 	}
 	defer downloadManager.Stop()
 
 	// Start HTTP server
-	server := http.NewServer(cfg, logger, putioClient)
+	server := http.NewServer(container)
 	return server.StartWithContext(ctx)
 }

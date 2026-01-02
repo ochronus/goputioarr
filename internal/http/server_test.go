@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ochronus/goputioarr/internal/app"
 	"github.com/ochronus/goputioarr/internal/config"
-	"github.com/ochronus/goputioarr/internal/services/putio"
 	"github.com/sirupsen/logrus"
 )
 
@@ -35,19 +35,30 @@ func setupTestLogger() *logrus.Logger {
 	return logger
 }
 
-func TestNewServer(t *testing.T) {
+func setupTestContainer() *app.Container {
 	cfg := setupTestConfig()
 	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
+	return &app.Container{
+		Config:        cfg,
+		Logger:        logger,
+		PutioClient:   &mockPutioClient{},
+		ValidatePutio: false,
+	}
+}
+
+func TestNewServer(t *testing.T) {
+	container := setupTestContainer()
+
+	server := NewServer(container)
 
 	if server == nil {
 		t.Fatal("expected non-nil server")
 	}
-	if server.config != cfg {
+	if server.config != container.Config {
 		t.Error("config not set correctly")
 	}
-	if server.logger != logger {
+	if server.logger != container.Logger {
 		t.Error("logger not set correctly")
 	}
 	if server.handler == nil {
@@ -61,9 +72,14 @@ func TestNewServer(t *testing.T) {
 func TestNewServerDebugMode(t *testing.T) {
 	cfg := setupTestConfig()
 	cfg.Loglevel = "debug"
-	logger := setupTestLogger()
+	container := &app.Container{
+		Config:        cfg,
+		Logger:        setupTestLogger(),
+		PutioClient:   &mockPutioClient{},
+		ValidatePutio: false,
+	}
 
-	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
+	server := NewServer(container)
 
 	if server == nil {
 		t.Fatal("expected non-nil server")
@@ -71,10 +87,9 @@ func TestNewServerDebugMode(t *testing.T) {
 }
 
 func TestGetRouter(t *testing.T) {
-	cfg := setupTestConfig()
-	logger := setupTestLogger()
+	container := setupTestContainer()
 
-	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
+	server := NewServer(container)
 	router := server.GetRouter()
 
 	if router == nil {
@@ -86,10 +101,9 @@ func TestGetRouter(t *testing.T) {
 }
 
 func TestServerRouteRegistration(t *testing.T) {
-	cfg := setupTestConfig()
-	logger := setupTestLogger()
+	container := setupTestContainer()
 
-	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
+	server := NewServer(container)
 	router := server.GetRouter()
 
 	// Test that routes are registered
@@ -118,10 +132,9 @@ func TestServerRouteRegistration(t *testing.T) {
 }
 
 func TestServerRoutesRespond(t *testing.T) {
-	cfg := setupTestConfig()
-	logger := setupTestLogger()
+	container := setupTestContainer()
 
-	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
+	server := NewServer(container)
 	router := server.GetRouter()
 
 	tests := []struct {
@@ -165,10 +178,9 @@ func TestServerRoutesRespond(t *testing.T) {
 }
 
 func TestServerRecoveryMiddleware(t *testing.T) {
-	cfg := setupTestConfig()
-	logger := setupTestLogger()
+	container := setupTestContainer()
 
-	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
+	server := NewServer(container)
 	router := server.GetRouter()
 
 	// Add a route that panics
@@ -196,12 +208,11 @@ func TestServerRecoveryMiddleware(t *testing.T) {
 
 func TestServerHandlerIntegration(t *testing.T) {
 	cfg := setupTestConfig()
-	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
+	server := NewServer(setupTestContainer())
 
 	// Verify handler was created with correct config
-	if server.handler.config.Username != cfg.Username {
+	if server.handler.config.Username != server.config.Username {
 		t.Error("handler config username mismatch")
 	}
 	if server.handler.config.Password != cfg.Password {
@@ -219,10 +230,11 @@ func TestServerMultipleInstances(t *testing.T) {
 	cfg2 := setupTestConfig()
 	cfg2.Port = 9092
 
-	logger := setupTestLogger()
+	container1 := &app.Container{Config: cfg1, Logger: setupTestLogger(), PutioClient: &mockPutioClient{}, ValidatePutio: false}
+	container2 := &app.Container{Config: cfg2, Logger: setupTestLogger(), PutioClient: &mockPutioClient{}, ValidatePutio: false}
 
-	server1 := NewServer(cfg1, logger, putio.NewClient(cfg1.Putio.APIKey))
-	server2 := NewServer(cfg2, logger, putio.NewClient(cfg2.Putio.APIKey))
+	server1 := NewServer(container1)
+	server2 := NewServer(container2)
 
 	if server1.config.Port == server2.config.Port {
 		t.Error("servers should have different ports")
@@ -233,14 +245,13 @@ func TestServerMultipleInstances(t *testing.T) {
 }
 
 func TestServerConfigReference(t *testing.T) {
-	cfg := setupTestConfig()
-	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
+	container := setupTestContainer()
+	server := NewServer(container)
 
 	// Modify config after server creation
-	originalDir := cfg.DownloadDirectory
-	cfg.DownloadDirectory = "/new/path"
+	originalDir := container.Config.DownloadDirectory
+	container.Config.DownloadDirectory = "/new/path"
 
 	// Server should see the change (it holds a reference)
 	if server.config.DownloadDirectory != "/new/path" {
@@ -248,17 +259,17 @@ func TestServerConfigReference(t *testing.T) {
 	}
 
 	// Restore
-	cfg.DownloadDirectory = originalDir
+	container.Config.DownloadDirectory = originalDir
 }
 
 func TestServerLoggerReference(t *testing.T) {
-	cfg := setupTestConfig()
-	logger := setupTestLogger()
 
-	server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
+	container := setupTestContainer()
+
+	server := NewServer(container)
 
 	// Server should hold reference to logger
-	if server.logger != logger {
+	if server.logger != container.Logger {
 		t.Error("server should hold reference to logger")
 	}
 }
@@ -270,10 +281,10 @@ func TestServerReleaseModeForNonDebug(t *testing.T) {
 		t.Run(level, func(t *testing.T) {
 			cfg := setupTestConfig()
 			cfg.Loglevel = level
-			logger := setupTestLogger()
+			container := &app.Container{Config: cfg, Logger: setupTestLogger(), PutioClient: &mockPutioClient{}, ValidatePutio: false}
 
 			// This should set gin to release mode
-			server := NewServer(cfg, logger, putio.NewClient(cfg.Putio.APIKey))
+			server := NewServer(container)
 
 			if server == nil {
 				t.Fatal("expected non-nil server")

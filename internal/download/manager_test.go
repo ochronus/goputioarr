@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/ochronus/goputioarr/internal/app"
 	"github.com/ochronus/goputioarr/internal/config"
 	"github.com/ochronus/goputioarr/internal/services/putio"
 	"github.com/sirupsen/logrus"
@@ -150,7 +151,14 @@ func setupTestManager() *Manager {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
 
-	return NewManager(cfg, logger, &mockPutioClient{}, nil)
+	container := &app.Container{
+		Config:        cfg,
+		Logger:        logger,
+		PutioClient:   &mockPutioClient{},
+		ValidatePutio: false,
+	}
+
+	return NewManager(container)
 }
 
 func TestNewManager(t *testing.T) {
@@ -586,7 +594,9 @@ func TestManagerConfigReference(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
 
-	manager := NewManager(cfg, logger, &mockPutioClient{}, nil)
+	container := &app.Container{Config: cfg, Logger: logger, PutioClient: &mockPutioClient{}, ValidatePutio: false}
+
+	manager := NewManager(container)
 
 	if manager.config.DownloadDirectory != "/original" {
 		t.Errorf("expected download directory '/original', got '%s'", manager.config.DownloadDirectory)
@@ -656,7 +666,8 @@ func TestIsImportedNoServices(t *testing.T) {
 	}
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
-	manager := NewManager(cfg, logger, &mockPutioClient{}, nil)
+	container := &app.Container{Config: cfg, Logger: logger, PutioClient: &mockPutioClient{}, ValidatePutio: false}
+	manager := NewManager(container)
 
 	transfer := &Transfer{
 		Name:       "Test Transfer",
@@ -697,7 +708,8 @@ func TestManagerWithDifferentConfigs(t *testing.T) {
 			logger := logrus.New()
 			logger.SetLevel(logrus.ErrorLevel)
 
-			manager := NewManager(cfg, logger, &mockPutioClient{}, nil)
+			container := &app.Container{Config: cfg, Logger: logger, PutioClient: &mockPutioClient{}, ValidatePutio: false}
+			manager := NewManager(container)
 
 			if manager.config.DownloadWorkers != tt.downloadWorkers {
 				t.Errorf("expected DownloadWorkers %d, got %d", tt.downloadWorkers, manager.config.DownloadWorkers)
@@ -797,7 +809,8 @@ func TestManagerLoggerLevel(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
 
-	manager := NewManager(cfg, logger, &mockPutioClient{}, nil)
+	container := &app.Container{Config: cfg, Logger: logger, PutioClient: &mockPutioClient{}, ValidatePutio: false}
+	manager := NewManager(container)
 
 	if manager.logger.Level != logrus.DebugLevel {
 		t.Errorf("expected logger level DebugLevel, got %v", manager.logger.Level)
@@ -877,7 +890,8 @@ func TestManagerSkipDirectoriesConfig(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
 
-	manager := NewManager(cfg, logger, &mockPutioClient{}, nil)
+	container := &app.Container{Config: cfg, Logger: logger, PutioClient: &mockPutioClient{}, ValidatePutio: false}
+	manager := NewManager(container)
 
 	if len(manager.config.SkipDirectories) != 3 {
 		t.Errorf("expected 3 skip directories, got %d", len(manager.config.SkipDirectories))
