@@ -5,7 +5,7 @@ go 1.25
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/gin-gonic/gin v1.11.0
-	github.com/sirupsen/logrus v1.9.3
+	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
 )
 
